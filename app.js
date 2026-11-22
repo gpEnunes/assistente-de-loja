@@ -2,7 +2,10 @@
 
 const INACTIVE_DAYS = 60;
 const STORAGE_KEY = "assistente-de-loja-v1";
-const VIEWS = ["inicio", "painel", "clientes", "produtos", "encomendas", "assistente"];
+const SESSION_KEY = "assistente-de-loja-sessao";
+const DEST_KEY = "assistente-de-loja-destino";
+const DEMO_ACCOUNT = { email: "silva@mercearia.pt", password: "loja", shop: "Mercearia Silva" };
+const VIEWS = ["painel", "clientes", "produtos", "encomendas", "assistente"];
 const STATUS_LABEL = {
   pendente: "Pendente",
   em_preparacao: "Em preparação",
@@ -994,22 +997,64 @@ function askCancel(order) {
   announce(`Encomenda #${order.id} anulada. Stock reposto.`);
 }
 
+function readSession() {
+  try {
+    const raw = sessionStorage.getItem(SESSION_KEY);
+    return raw ? JSON.parse(raw) : null;
+  } catch (error) {
+    return null;
+  }
+}
+
 function currentView() {
   const id = location.hash.slice(1);
-  return VIEWS.includes(id) ? id : "inicio";
+  if (!readSession()) return "entrar";
+  return VIEWS.includes(id) ? id : "painel";
 }
 
 function syncView() {
   const id = currentView();
+  if (!readSession() && VIEWS.includes(location.hash.slice(1))) {
+    sessionStorage.setItem(DEST_KEY, location.hash.slice(1));
+  }
   if (location.hash.slice(1) !== id) history.replaceState(null, "", `#${id}`);
   document.documentElement.dataset.view = id;
-  document.querySelectorAll(".tabs a").forEach((link) => {
+  document.querySelectorAll(".rail a").forEach((link) => {
     if (link.getAttribute("href") === `#${id}`) link.setAttribute("aria-current", "page");
     else link.removeAttribute("aria-current");
   });
   if (!booted) return;
+  if (id === "entrar") {
+    document.getElementById("login-email").focus();
+    return;
+  }
   const heading = document.getElementById(id).querySelector("h1");
   if (heading) heading.focus();
+}
+
+function submitLogin(event) {
+  event.preventDefault();
+  const email = document.getElementById("login-email").value.trim().toLowerCase();
+  const password = document.getElementById("login-password").value;
+  const error = document.getElementById("login-error");
+  if (email !== DEMO_ACCOUNT.email || password !== DEMO_ACCOUNT.password) {
+    error.textContent = "Correio ou palavra-passe não correspondem à conta de exemplo.";
+    return;
+  }
+  error.textContent = "";
+  sessionStorage.setItem(SESSION_KEY, JSON.stringify({ email, shop: DEMO_ACCOUNT.shop }));
+  const dest = sessionStorage.getItem(DEST_KEY);
+  sessionStorage.removeItem(DEST_KEY);
+  const next = VIEWS.includes(dest) ? dest : "painel";
+  if (location.hash.slice(1) === next) syncView();
+  else location.hash = next;
+}
+
+function leaveShop() {
+  sessionStorage.removeItem(SESSION_KEY);
+  document.getElementById("login-password").value = "";
+  if (location.hash === "#entrar") syncView();
+  else location.hash = "entrar";
 }
 
 function boot() {
@@ -1022,6 +1067,9 @@ function boot() {
   booted = true;
 
   window.addEventListener("hashchange", syncView);
+
+  document.getElementById("login-form").addEventListener("submit", submitLogin);
+  document.getElementById("logout").addEventListener("click", leaveShop);
 
   document.getElementById("reset").addEventListener("click", () => {
     const ok = window.confirm("Repor os dados de exemplo? Encomendas, stock e mensagens desta sessão são apagados.");
