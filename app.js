@@ -1,29 +1,47 @@
 "use strict";
 
 const INACTIVE_DAYS = 60;
-const STORAGE_KEY = "assistente-de-loja-v1";
+const STORAGE_KEY = "assistente-de-loja-v2";
 const SESSION_KEY = "assistente-de-loja-sessao";
 const DEST_KEY = "assistente-de-loja-destino";
+const BRIDGE_KEY = "assistente-de-loja-ponte";
 const DEMO_ACCOUNT = { email: "silva@mercearia.pt", password: "loja", shop: "Mercearia Silva" };
-const VIEWS = ["painel", "clientes", "produtos", "encomendas", "assistente"];
+const VIEWS = ["painel", "clientes", "produtos", "encomendas", "assistente", "configuracoes"];
+const PAGE_SIZE = 6;
+const ORIGIN_LABEL = { balcao: "Balcão", facebook: "Facebook", whatsapp: "WhatsApp", instagram: "Instagram" };
 const STATUS_LABEL = {
   pendente: "Pendente",
   em_preparacao: "Em preparação",
   entregue: "Entregue",
 };
 
-const CUSTOMERS = [
-  { id: 1, name: "Ana Costa", phone: "912 345 678", email: "ana.costa@email.pt", notes: "Prefere aviso quando a encomenda chega." },
-  { id: 2, name: "João Mendes", phone: "913 220 441", email: "joao.mendes@email.pt", notes: "Compra arroz e azeite no início do mês." },
-  { id: 3, name: "Carla Ribeiro", phone: "961 008 332", email: "carla.ribeiro@email.pt", notes: "Levanta ao fim do dia." },
-  { id: 4, name: "Pedro Alves", phone: "924 776 105", email: "pedro.alves@email.pt", notes: "Pediu para não telefonar de manhã." },
-  { id: 5, name: "Marta Sousa", phone: "933 651 870", email: "marta.sousa@email.pt", notes: "" },
-  { id: 6, name: "Rui Fernandes", phone: "918 443 229", email: "rui.fernandes@email.pt", notes: "Encomenda habitual de café." },
-];
+function seedCustomers() {
+  const person = (id, name, phone, address, cobranca, origem, metaId) => ({
+    id, name, phone, address, cobranca, origem, metaId, photo: "",
+  });
+  return [
+    person(1, "Ana Costa", "912 345 678", "Rua da Graça 18, 1100-265 Lisboa", true, "facebook", "2458712345678901"),
+    person(2, "João Mendes", "913 220 441", "Avenida da República 40, 2000-123 Santarém", false, "whatsapp", "351913220441"),
+    person(3, "Carla Ribeiro", "961 008 332", "Rua do Sol 7, 2500-100 Caldas da Rainha", true, "instagram", "178800112233"),
+    person(4, "Pedro Alves", "924 776 105", "Largo do Pelourinho 2, 2460-001 Alcobaça", false, "balcao", ""),
+    person(5, "Marta Sousa", "933 651 870", "Rua das Flores 25, 2400-150 Leiria", true, "facebook", "2458712345678902"),
+    person(6, "Rui Fernandes", "918 443 229", "Travessa da Fonte 4, 2300-500 Tomar", false, "whatsapp", "351918443229"),
+    person(7, "Inês Carvalho", "910 112 334", "Rua de São Vicente 9, 1100-580 Lisboa", false, "instagram", "178800112244"),
+    person(8, "Tiago Nunes", "927 551 008", "Avenida do Mar 16, 2520-210 Peniche", true, "balcao", ""),
+    person(9, "Sofia Lopes", "965 440 217", "Rua Direita 33, 2040-335 Rio Maior", false, "facebook", "2458712345678903"),
+    person(10, "Miguel Pinto", "919 300 145", "Beco das Oliveiras 1, 2350-001 Torres Novas", true, "whatsapp", "351919300145"),
+    person(11, "Helena Dias", "932 778 016", "Rua da Estação 12, 2495-650 Fátima", false, "balcao", ""),
+    person(12, "Bruno Teixeira", "964 221 909", "Largo da Misericórdia 5, 2430-209 Marinha Grande", true, "instagram", "178800112255"),
+  ];
+}
 
 const ui = {
   customerQuery: "",
-  customerFilter: "todos",
+  customerActivity: "todos",
+  customerCobranca: "todos",
+  customerOrigem: "todos",
+  customerPage: 1,
+  suggestIndex: -1,
   productQuery: "",
   productFilter: "todos",
   orderFilter: "todas",
@@ -225,6 +243,7 @@ function seed() {
   });
 
   return {
+    customers: seedCustomers(),
     products,
     orders,
     nextId,
@@ -243,7 +262,7 @@ function loadState() {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (!raw) return fresh;
     const saved = JSON.parse(raw);
-    if (!saved || !Array.isArray(saved.products) || !Array.isArray(saved.orders) || !Array.isArray(saved.thread)) {
+    if (!saved || !Array.isArray(saved.customers) || !Array.isArray(saved.products) || !Array.isArray(saved.orders) || !Array.isArray(saved.thread)) {
       return fresh;
     }
     return saved;
@@ -261,7 +280,7 @@ function maxMessageId(thread) {
 }
 
 function customerById(id) {
-  return CUSTOMERS.find((customer) => customer.id === id);
+  return state.customers.find((customer) => customer.id === id);
 }
 
 function productById(id) {
@@ -430,7 +449,7 @@ function answerFor(intent) {
     return `Há ${low.length} ${noun} abaixo do mínimo.\n${lines.join("\n")}`;
   }
   if (intent === "inactive") {
-    const people = CUSTOMERS.filter((customer) => isInactive(customer.id));
+    const people = state.customers.filter((customer) => isInactive(customer.id));
     if (!people.length) return "Nenhum cliente está inativo. Todos compraram nos últimos 60 dias.";
     const lines = people.map((customer) => {
       const last = lastDelivered(customer.id);
@@ -625,25 +644,102 @@ function metric(label, value, hint) {
   ]);
 }
 
+function matchesCustomer(customer, query) {
+  if (!query) return true;
+  return [customer.name, customer.phone, customer.address].some((field) => normalize(field || "").includes(query));
+}
+
 function visibleCustomers() {
   const query = normalize(ui.customerQuery.trim());
-  return CUSTOMERS.filter((customer) => {
+  return state.customers.filter((customer) => {
     const inactive = isInactive(customer.id);
-    if (ui.customerFilter === "ativos" && inactive) return false;
-    if (ui.customerFilter === "inativos" && !inactive) return false;
-    if (!query) return true;
-    return [customer.name, customer.phone, customer.email, customer.notes].some((field) => normalize(field).includes(query));
+    if (ui.customerActivity === "ativos" && inactive) return false;
+    if (ui.customerActivity === "inativos" && !inactive) return false;
+    if (ui.customerCobranca === "sim" && !customer.cobranca) return false;
+    if (ui.customerCobranca === "nao" && customer.cobranca) return false;
+    if (ui.customerOrigem !== "todos" && customer.origem !== ui.customerOrigem) return false;
+    return matchesCustomer(customer, query);
   });
+}
+
+function initials(name) {
+  return name.split(/\s+/).filter(Boolean).slice(0, 2).map((part) => part[0]).join("").toUpperCase();
+}
+
+function avatarNode(customer) {
+  if (customer.photo) return el("img", { class: "avatar", src: customer.photo, alt: "" });
+  return el("span", { class: "avatar", "aria-hidden": "true", text: initials(customer.name) });
+}
+
+function suggestionMatches() {
+  const query = normalize(ui.customerQuery.trim());
+  if (!query) return [];
+  return state.customers.filter((customer) => matchesCustomer(customer, query)).slice(0, 6);
+}
+
+function chooseCustomer(customer) {
+  ui.selectedCustomerId = customer.id;
+  ui.customerQuery = "";
+  ui.suggestIndex = -1;
+  ui.customerActivity = "todos";
+  ui.customerCobranca = "todos";
+  ui.customerOrigem = "todos";
+  const index = state.customers.findIndex((item) => item.id === customer.id);
+  ui.customerPage = Math.floor(Math.max(index, 0) / PAGE_SIZE) + 1;
+  document.getElementById("customer-search").value = "";
+  renderCustomers();
+}
+
+function renderSuggestions() {
+  const box = document.getElementById("customer-suggest");
+  const input = document.getElementById("customer-search");
+  const matches = suggestionMatches();
+  if (ui.suggestIndex >= matches.length) ui.suggestIndex = matches.length - 1;
+  box.replaceChildren();
+  matches.forEach((customer, index) => {
+    const option = el("li", {
+      id: `suggest-${customer.id}`,
+      role: "option",
+      "aria-selected": index === ui.suggestIndex ? "true" : "false",
+      class: index === ui.suggestIndex ? "is-active" : "",
+    }, [
+      el("span", { text: customer.name }),
+      el("span", { class: "meta", text: customer.phone }),
+    ]);
+    option.addEventListener("mousedown", (event) => {
+      event.preventDefault();
+      chooseCustomer(customer);
+    });
+    box.append(option);
+  });
+  const open = matches.length > 0;
+  box.hidden = !open;
+  input.setAttribute("aria-expanded", open ? "true" : "false");
+  const active = ui.suggestIndex >= 0 ? matches[ui.suggestIndex] : null;
+  if (active) input.setAttribute("aria-activedescendant", `suggest-${active.id}`);
+  else input.removeAttribute("aria-activedescendant");
 }
 
 function renderCustomers() {
   const list = document.getElementById("customer-list");
   const customers = visibleCustomers();
+  const pages = Math.max(1, Math.ceil(customers.length / PAGE_SIZE));
+  if (ui.customerPage > pages) ui.customerPage = pages;
+  if (ui.customerPage < 1) ui.customerPage = 1;
+  const page = customers.slice((ui.customerPage - 1) * PAGE_SIZE, ui.customerPage * PAGE_SIZE);
+  document.getElementById("filter-activity").value = ui.customerActivity;
+  document.getElementById("filter-cobranca").value = ui.customerCobranca;
+  document.getElementById("filter-origem").value = ui.customerOrigem;
+  document.getElementById("customer-page").textContent = customers.length
+    ? `Página ${ui.customerPage} de ${pages}`
+    : "Sem resultados";
+  document.getElementById("customer-prev").disabled = ui.customerPage <= 1;
+  document.getElementById("customer-next").disabled = ui.customerPage >= pages || !customers.length;
   list.replaceChildren();
-  if (!customers.length) {
+  if (!page.length) {
     list.append(el("li", { class: "empty", text: "Nenhum cliente corresponde à pesquisa." }));
   }
-  customers.forEach((customer) => {
+  page.forEach((customer) => {
     const last = lastDelivered(customer.id);
     const inactive = isInactive(customer.id);
     const selected = customer.id === ui.selectedCustomerId;
@@ -656,7 +752,8 @@ function renderCustomers() {
         el("h2", {}, [button]),
         inactive ? el("span", { class: "badge badge-late", text: "Inativo" }) : el("span", { class: "badge badge-ok", text: "Ativo" }),
       ]),
-      el("p", { class: "meta", text: `${customer.phone} · última compra ${last ? daysLabel(last.deliveredAt) : "sem registo"}` }),
+      el("p", { class: "meta", text: `${customer.phone} · ${ORIGIN_LABEL[customer.origem] || "Balcão"} · ${customer.cobranca ? "à cobrança" : "sem cobrança"}` }),
+      el("p", { class: "meta", text: `Última compra ${last ? daysLabel(last.deliveredAt) : "sem registo"}` }),
     ]);
     card.addEventListener("click", () => {
       ui.selectedCustomerId = customer.id;
@@ -666,6 +763,7 @@ function renderCustomers() {
     });
     list.append(el("li", {}, [card]));
   });
+  renderSuggestions();
   renderCustomerDetail();
 }
 
@@ -673,7 +771,7 @@ function renderCustomerDetail() {
   const panel = document.getElementById("customer-detail");
   const customer = customerById(ui.selectedCustomerId);
   if (!customer) {
-    panel.replaceChildren(el("p", { class: "empty", text: "Escolha um cliente para ver o contacto, as notas e o histórico." }));
+    panel.replaceChildren(el("p", { class: "empty", text: "Escolha um cliente para ver a ficha e o histórico." }));
     return;
   }
   const history = state.orders
@@ -684,15 +782,73 @@ function renderCustomerDetail() {
     el("p", { class: "meta", text: `${formatDate(order.createdAt)} · ${formatMoney(orderTotal(order))}` }),
     el("p", { text: itemSummary(order) }),
   ]));
+  const name = el("input", { name: "name", value: customer.name, required: "true", autocomplete: "name" });
+  const address = el("input", { name: "address", value: customer.address, autocomplete: "street-address" });
+  const phone = el("input", { name: "phone", value: customer.phone, autocomplete: "tel" });
+  const cobranca = el("select", { name: "cobranca" }, [
+    el("option", { value: "nao", text: "Não" }),
+    el("option", { value: "sim", text: "Sim" }),
+  ]);
+  cobranca.value = customer.cobranca ? "sim" : "nao";
+  const form = el("form", { class: "ficha" }, [
+    el("div", { class: "ficha-head" }, [
+      avatarNode(customer),
+      el("div", {}, [
+        el("p", { class: "meta", text: isInactive(customer.id) ? "Sem compra entregue nos últimos 60 dias" : "Compra recente" }),
+      ]),
+    ]),
+    el("label", {}, ["Nome completo", name]),
+    el("label", {}, ["Morada", address]),
+    el("label", {}, ["Telefone", phone]),
+    el("label", {}, ["À cobrança", cobranca]),
+    el("button", { class: "btn btn-primary", type: "submit" }, ["Guardar ficha"]),
+  ]);
+  form.addEventListener("submit", (event) => {
+    event.preventDefault();
+    const nextName = name.value.trim();
+    if (!nextName) return;
+    customer.name = nextName;
+    customer.address = address.value.trim();
+    customer.phone = phone.value.trim();
+    customer.cobranca = cobranca.value === "sim";
+    persist();
+    renderCustomers();
+    announce("Ficha guardada.");
+  });
   panel.replaceChildren(
-    el("p", { class: "eyebrow", text: isInactive(customer.id) ? "Cliente inativo" : "Cliente ativo" }),
-    el("h2", { text: customer.name }),
-    el("p", {}, [el("a", { href: `tel:${customer.phone.replace(/\s/g, "")}`, text: customer.phone })]),
-    el("p", {}, [el("a", { href: `mailto:${customer.email}`, text: customer.email })]),
-    el("p", { text: customer.notes || "Sem notas." }),
+    form,
     el("h3", { text: "Histórico" }),
     history.length ? el("ul", { class: "history" }, items) : el("p", { class: "empty", text: "Ainda não há encomendas deste cliente." }),
   );
+}
+
+function readBridge() {
+  try {
+    const raw = JSON.parse(localStorage.getItem(BRIDGE_KEY) || "null");
+    return {
+      appId: "", portfolioId: "", pageId: "", instagramId: "", whatsappId: "", phoneId: "",
+      ...(raw || {}),
+    };
+  } catch (error) {
+    return { appId: "", portfolioId: "", pageId: "", instagramId: "", whatsappId: "", phoneId: "" };
+  }
+}
+
+function bridgeReady(bridge) {
+  return Object.values(bridge).some((value) => String(value || "").trim());
+}
+
+function renderBridge() {
+  const bridge = readBridge();
+  document.getElementById("bridge-app").value = bridge.appId || "";
+  document.getElementById("bridge-portfolio").value = bridge.portfolioId || "";
+  document.getElementById("bridge-page").value = bridge.pageId || "";
+  document.getElementById("bridge-instagram").value = bridge.instagramId || "";
+  document.getElementById("bridge-whatsapp").value = bridge.whatsappId || "";
+  document.getElementById("bridge-phone").value = bridge.phoneId || "";
+  document.getElementById("bridge-status").textContent = bridgeReady(bridge)
+    ? "Identificadores guardados. A leitura dos contactos faz-se no servidor."
+    : "Por ligar.";
 }
 
 function renderProducts() {
@@ -816,7 +972,7 @@ function proposalForm(message) {
   const error = el("p", { "data-error": true, role: "alert" });
   if (message.proposal.type === "order") {
     const customer = el("select", { "data-field": "customer" });
-    CUSTOMERS.forEach((item) => customer.append(el("option", { value: String(item.id), text: item.name })));
+    state.customers.forEach((item) => customer.append(el("option", { value: String(item.id), text: item.name })));
     const product = el("select", { "data-field": "product" });
     state.products.forEach((item) => product.append(el("option", { value: String(item.id), text: item.name })));
     const qty = el("input", { "data-field": "qty", type: "number", min: "1", step: "1", value: "1", inputmode: "numeric" });
@@ -882,14 +1038,18 @@ function renderData() {
   renderOrders();
   renderThread();
   renderLog();
+  renderBridge();
 }
 
 function fillOrderSelects() {
   const customers = document.getElementById("order-customer");
+  const keep = customers.value;
+  customers.replaceChildren();
+  state.customers.forEach((customer) => customers.append(el("option", { value: String(customer.id), text: customer.name })));
+  if ([...customers.options].some((option) => option.value === keep)) customers.value = keep;
   const statuses = document.getElementById("order-status");
   const products = document.getElementById("line-product");
-  if (customers.options.length) return;
-  CUSTOMERS.forEach((customer) => customers.append(el("option", { value: String(customer.id), text: customer.name })));
+  if (statuses.options.length) return;
   Object.entries(STATUS_LABEL).forEach(([value, label]) => statuses.append(el("option", { value, text: label })));
   state.products.forEach((product) => products.append(el("option", { value: String(product.id), text: product.name })));
 }
@@ -914,7 +1074,7 @@ function openOrderDialog(order) {
   ui.editingId = order ? order.id : null;
   ui.draftItems = order ? order.items.map((item) => ({ ...item })) : [];
   document.getElementById("order-dialog-title").textContent = order ? `Editar encomenda #${order.id}` : "Nova encomenda";
-  document.getElementById("order-customer").value = String(order ? order.customerId : CUSTOMERS[0].id);
+  document.getElementById("order-customer").value = String(order ? order.customerId : state.customers[0].id);
   document.getElementById("order-status").value = order ? order.status : "pendente";
   document.getElementById("order-due").value = dateInputValue(order ? order.dueAt : shiftDays(1));
   document.getElementById("order-error").textContent = "";
@@ -1060,7 +1220,6 @@ function leaveShop() {
 function boot() {
   document.querySelectorAll(".js-fallback").forEach((node) => node.remove());
   renderData();
-  updatePressed("[data-customer-filter]", "customerFilter", ui.customerFilter);
   updatePressed("[data-product-filter]", "productFilter", ui.productFilter);
   updatePressed("[data-order-filter]", "orderFilter", ui.orderFilter);
   syncView();
@@ -1080,33 +1239,95 @@ function boot() {
     ui.selectedCustomerId = 1;
     ui.highlightOrderId = null;
     ui.customerQuery = "";
+    ui.customerActivity = "todos";
+    ui.customerCobranca = "todos";
+    ui.customerOrigem = "todos";
+    ui.customerPage = 1;
+    ui.suggestIndex = -1;
     ui.productQuery = "";
-    ui.customerFilter = "todos";
     ui.productFilter = "todos";
     ui.orderFilter = "todas";
     document.getElementById("customer-search").value = "";
     document.getElementById("product-search").value = "";
-    updatePressed("[data-customer-filter]", "customerFilter", ui.customerFilter);
     updatePressed("[data-product-filter]", "productFilter", ui.productFilter);
     updatePressed("[data-order-filter]", "orderFilter", ui.orderFilter);
     renderData();
     announce("Dados de exemplo repostos.");
   });
 
-  document.getElementById("customer-search").addEventListener("input", (event) => {
+  const customerSearch = document.getElementById("customer-search");
+  customerSearch.addEventListener("input", (event) => {
     ui.customerQuery = event.target.value;
+    ui.customerPage = 1;
+    ui.suggestIndex = -1;
     renderCustomers();
+  });
+  customerSearch.addEventListener("keydown", (event) => {
+    const matches = suggestionMatches();
+    if (event.key === "ArrowDown" && matches.length) {
+      event.preventDefault();
+      ui.suggestIndex = Math.min(ui.suggestIndex + 1, matches.length - 1);
+      renderSuggestions();
+    } else if (event.key === "ArrowUp" && matches.length) {
+      event.preventDefault();
+      ui.suggestIndex = Math.max(ui.suggestIndex - 1, 0);
+      renderSuggestions();
+    } else if (event.key === "Enter" && ui.suggestIndex >= 0 && matches[ui.suggestIndex]) {
+      event.preventDefault();
+      chooseCustomer(matches[ui.suggestIndex]);
+    } else if (event.key === "Escape") {
+      ui.suggestIndex = -1;
+      ui.customerQuery = "";
+      customerSearch.value = "";
+      renderCustomers();
+    }
+  });
+  document.getElementById("customer-filters-toggle").addEventListener("click", () => {
+    const panel = document.getElementById("customer-filters");
+    const open = panel.hidden;
+    panel.hidden = !open;
+    document.getElementById("customer-filters-toggle").setAttribute("aria-expanded", open ? "true" : "false");
+  });
+  document.getElementById("customer-filters").addEventListener("change", (event) => {
+    const field = event.target.id;
+    if (field === "filter-activity") ui.customerActivity = event.target.value;
+    if (field === "filter-cobranca") ui.customerCobranca = event.target.value;
+    if (field === "filter-origem") ui.customerOrigem = event.target.value;
+    ui.customerPage = 1;
+    renderCustomers();
+  });
+  document.getElementById("customer-prev").addEventListener("click", () => {
+    ui.customerPage -= 1;
+    renderCustomers();
+  });
+  document.getElementById("customer-next").addEventListener("click", () => {
+    ui.customerPage += 1;
+    renderCustomers();
+  });
+  document.getElementById("sync-meta").addEventListener("click", () => {
+    if (!bridgeReady(readBridge())) {
+      location.hash = "configuracoes";
+      return;
+    }
+    announce("A conta está guardada. A leitura dos contactos faz-se no servidor.");
+  });
+  document.getElementById("bridge-form").addEventListener("submit", (event) => {
+    event.preventDefault();
+    const bridge = {
+      appId: document.getElementById("bridge-app").value.trim(),
+      portfolioId: document.getElementById("bridge-portfolio").value.trim(),
+      pageId: document.getElementById("bridge-page").value.trim(),
+      instagramId: document.getElementById("bridge-instagram").value.trim(),
+      whatsappId: document.getElementById("bridge-whatsapp").value.trim(),
+      phoneId: document.getElementById("bridge-phone").value.trim(),
+    };
+    localStorage.setItem(BRIDGE_KEY, JSON.stringify(bridge));
+    renderBridge();
+    announce(bridgeReady(bridge) ? "Identificadores guardados." : "Conta por ligar.");
   });
   document.getElementById("product-search").addEventListener("input", (event) => {
     ui.productQuery = event.target.value;
     renderProducts();
-  });
-  document.querySelectorAll("[data-customer-filter]").forEach((button) => {
-    button.addEventListener("click", () => {
-      ui.customerFilter = button.dataset.customerFilter;
-      updatePressed("[data-customer-filter]", "customerFilter", ui.customerFilter);
-      renderCustomers();
-    });
   });
   document.querySelectorAll("[data-product-filter]").forEach((button) => {
     button.addEventListener("click", () => {
