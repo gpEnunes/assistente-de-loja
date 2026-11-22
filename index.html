@@ -1,0 +1,242 @@
+<!DOCTYPE html>
+<html lang="pt-PT">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Assistente de Loja</title>
+  <meta name="description" content="Clientes, stock e encomendas para pequenos comércios, com um assistente que só age depois de confirmação.">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%231c2822'/%3E%3Ctext x='16' y='21' text-anchor='middle' font-size='12' font-family='Georgia' fill='%23c4a15a'%3EAL%3C/text%3E%3C/svg%3E">
+  <link rel="stylesheet" href="styles.css">
+  <script>
+    (function () {
+      var known = ["inicio", "painel", "clientes", "produtos", "encomendas", "assistente"];
+      var id = (location.hash || "#inicio").slice(1);
+      document.documentElement.dataset.view = known.indexOf(id) === -1 ? "inicio" : id;
+    })();
+  </script>
+</head>
+<body>
+  <!--
+    Assunções desta entrega (fase 1, dados de exemplo no browser):
+    1. Há um só comércio de demonstração, a Mercearia Silva. Não há registo nem servidor.
+    2. O assistente aplica regras aos dados da loja. Não chama um modelo remoto.
+    3. O stock baixa quando a encomenda é criada e a edição ajusta a diferença. Anular devolve o stock. APP.md não tem estado "cancelada".
+    4. Encomenda atrasada: data prevista anterior a hoje e estado diferente de entregue.
+    5. Cliente inativo: sem compra entregue há 60 dias ou mais.
+    6. Vendas = soma das encomendas entregues. A comparação é o mês civil atual com o anterior.
+    7. A quantidade no catálogo é a prateleira atual. Dá para a corrigir à mão quando chega mercadoria.
+    8. Mensagens são redigidas e ficam no registo. Não são enviadas.
+    9. Há JavaScript mínimo porque pesquisa, filtros, stock e confirmações não cabem só em CSS. APP.md prevê dados no browser.
+  -->
+  <a class="skip" href="#conteudo">Saltar para o conteúdo</a>
+  <div class="shell">
+    <div class="top">
+      <header class="mast">
+        <a class="brand" href="#inicio">
+          <span class="mark" aria-hidden="true">AL</span>
+          <span>
+            <span class="brand-name">Assistente de Loja</span>
+            <span class="shop">Mercearia Silva · loja de exemplo</span>
+          </span>
+        </a>
+        <div class="mast-side">
+          <p id="today-label" class="today"></p>
+          <button type="button" class="btn btn-ghost" id="reset">Repor dados</button>
+        </div>
+      </header>
+      <nav class="tabs" aria-label="Secções">
+        <a href="#inicio">Início</a>
+        <a href="#painel">Painel</a>
+        <a href="#clientes">Clientes</a>
+        <a href="#produtos">Produtos</a>
+        <a href="#encomendas">Encomendas</a>
+        <a href="#assistente">Assistente</a>
+      </nav>
+    </div>
+
+    <main id="conteudo" tabindex="-1">
+      <p id="status" class="sr-only" aria-live="polite"></p>
+
+      <section id="inicio" class="screen">
+        <p class="eyebrow">Para pequenos comércios</p>
+        <h1 tabindex="-1">Clientes, stock e encomendas, num sítio só.</h1>
+        <p class="lede">Uma app simples para o dono de uma loja, um café, uma oficina ou uma mercearia gerir o dia a dia, com um assistente que ajuda a decidir e a agir.</p>
+        <div class="hero-actions">
+          <a class="btn btn-primary" href="#painel">Abrir a loja de exemplo</a>
+          <p class="note">Os dados ficam neste browser. Nada é enviado.</p>
+        </div>
+        <h2>Perguntas do dia</h2>
+        <ul class="question-list">
+          <li><a href="#assistente" data-ask="O que tenho de repor esta semana?">O que tenho de repor esta semana?</a></li>
+          <li><a href="#assistente" data-ask="Que clientes não compram há dois meses?">Que clientes não compram há dois meses?</a></li>
+          <li><a href="#assistente" data-ask="Quanto vendi este mês comparado com o anterior?">Quanto vendi este mês comparado com o anterior?</a></li>
+          <li><a href="#assistente" data-ask="Prepara uma mensagem para o cliente a avisar que a encomenda chegou.">Prepara uma mensagem para o cliente a avisar que a encomenda chegou.</a></li>
+        </ul>
+        <div class="feature-grid">
+          <article>
+            <h2>Painel</h2>
+            <p>Vendas e encomendas do dia, stock baixo, pendentes e atrasos.</p>
+          </article>
+          <article>
+            <h2>Clientes</h2>
+            <p>Contacto, notas, histórico, pesquisa e quem está inativo.</p>
+          </article>
+          <article>
+            <h2>Produtos</h2>
+            <p>Preço, quantidade e stock mínimo, com alerta quando falta.</p>
+          </article>
+          <article>
+            <h2>Encomendas</h2>
+            <p>Criar, editar e acompanhar. O stock atualiza com a encomenda.</p>
+          </article>
+          <article>
+            <h2>Assistente</h2>
+            <p>Responde sobre a loja e só cria encomendas ou mensagens com confirmação. Fica tudo registado.</p>
+          </article>
+        </div>
+      </section>
+
+      <section id="painel" class="screen">
+        <h1 tabindex="-1">Painel</h1>
+        <p class="intro">Resumo de hoje na Mercearia Silva. Os números vêm dos dados de exemplo e do que alterar nesta sessão.</p>
+        <p class="js-fallback">Os números deste ecrã aparecem com JavaScript ativo.</p>
+        <ul class="metrics" id="metrics"></ul>
+        <section class="compare" aria-labelledby="compare-title">
+          <h2 id="compare-title">Este mês e o anterior</h2>
+          <p id="compare-text"></p>
+        </section>
+        <div class="columns">
+          <section class="panel" aria-labelledby="low-title">
+            <h2 id="low-title">Stock baixo</h2>
+            <ul class="stack" id="low-stock"></ul>
+          </section>
+          <section class="panel" aria-labelledby="open-title">
+            <h2 id="open-title">Encomendas por tratar</h2>
+            <ul class="stack" id="open-orders"></ul>
+          </section>
+        </div>
+      </section>
+
+      <section id="clientes" class="screen">
+        <h1 tabindex="-1">Clientes</h1>
+        <p class="intro">Contacto, notas e histórico de compras. Inativo significa sem compra entregue há 60 dias ou mais.</p>
+        <p class="js-fallback">A lista de clientes aparece com JavaScript ativo.</p>
+        <div class="toolbar">
+          <label class="search">
+            <span class="sr-only">Pesquisar clientes</span>
+            <input id="customer-search" type="search" placeholder="Nome, contacto ou nota" autocomplete="off">
+          </label>
+          <div class="filters" role="group" aria-label="Filtrar clientes">
+            <button type="button" data-customer-filter="todos" aria-pressed="true">Todos</button>
+            <button type="button" data-customer-filter="ativos" aria-pressed="false">Ativos</button>
+            <button type="button" data-customer-filter="inativos" aria-pressed="false">Inativos</button>
+          </div>
+        </div>
+        <div class="split">
+          <ul class="stack" id="customer-list"></ul>
+          <aside class="detail" id="customer-detail" aria-label="Ficha do cliente"></aside>
+        </div>
+      </section>
+
+      <section id="produtos" class="screen">
+        <h1 tabindex="-1">Produtos e stock</h1>
+        <p class="intro">A quantidade é o que está na prateleira. Criar uma encomenda baixa o stock. Corrija a quantidade quando chegar mercadoria.</p>
+        <p class="js-fallback">O catálogo aparece com JavaScript ativo.</p>
+        <div class="toolbar">
+          <label class="search">
+            <span class="sr-only">Pesquisar produtos</span>
+            <input id="product-search" type="search" placeholder="Nome do produto" autocomplete="off">
+          </label>
+          <div class="filters" role="group" aria-label="Filtrar produtos">
+            <button type="button" data-product-filter="todos" aria-pressed="true">Todos</button>
+            <button type="button" data-product-filter="baixo" aria-pressed="false">Stock baixo</button>
+          </div>
+        </div>
+        <ul class="catalog" id="product-list"></ul>
+      </section>
+
+      <section id="encomendas" class="screen">
+        <h1 tabindex="-1">Encomendas</h1>
+        <p class="intro">Pendente, em preparação ou entregue. Ao criar, o stock baixa. Ao editar quantidades, ajusta a diferença. Anular devolve o stock.</p>
+        <p class="js-fallback">As encomendas aparecem com JavaScript ativo.</p>
+        <div class="toolbar">
+          <div class="filters" role="group" aria-label="Filtrar encomendas">
+            <button type="button" data-order-filter="todas" aria-pressed="true">Todas</button>
+            <button type="button" data-order-filter="pendente" aria-pressed="false">Pendentes</button>
+            <button type="button" data-order-filter="em_preparacao" aria-pressed="false">Em preparação</button>
+            <button type="button" data-order-filter="entregue" aria-pressed="false">Entregues</button>
+            <button type="button" data-order-filter="atrasadas" aria-pressed="false">Atrasadas</button>
+          </div>
+          <button type="button" class="btn btn-primary" id="new-order">Nova encomenda</button>
+        </div>
+        <div class="order-list" id="order-list"></div>
+      </section>
+
+      <section id="assistente" class="screen">
+        <h1 tabindex="-1">Assistente</h1>
+        <p class="intro">Responde sobre os dados desta loja. Criar uma encomenda ou registar uma mensagem pede confirmação e fica no registo.</p>
+        <p class="js-fallback">O assistente aparece com JavaScript ativo.</p>
+        <div class="assistant-layout">
+          <div class="conversation">
+            <div class="suggestions" role="group" aria-label="Perguntas frequentes">
+              <button type="button" class="chip" data-ask="O que tenho de repor esta semana?">O que repor</button>
+              <button type="button" class="chip" data-ask="Que clientes não compram há dois meses?">Clientes inativos</button>
+              <button type="button" class="chip" data-ask="Quanto vendi este mês comparado com o anterior?">Vendas do mês</button>
+              <button type="button" class="chip" data-ask="Prepara uma mensagem para o cliente a avisar que a encomenda chegou.">Mensagem de encomenda</button>
+              <button type="button" class="chip" data-ask="Quero criar uma encomenda.">Criar encomenda</button>
+            </div>
+            <div id="thread" class="thread"></div>
+            <form id="assistant-form" class="ask">
+              <label class="sr-only" for="assistant-input">Pergunta para o assistente</label>
+              <input id="assistant-input" type="text" placeholder="Escreva a sua pergunta" autocomplete="off">
+              <button type="submit" class="btn btn-primary">Perguntar</button>
+            </form>
+          </div>
+          <aside class="log-panel" aria-labelledby="log-title">
+            <h2 id="log-title">Registo</h2>
+            <ul id="assistant-log" class="log"></ul>
+          </aside>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <dialog id="order-dialog" aria-labelledby="order-dialog-title">
+    <form id="order-form">
+      <h2 id="order-dialog-title">Nova encomenda</h2>
+      <div class="form-grid">
+        <label>Cliente
+          <select id="order-customer" required></select>
+        </label>
+        <label>Estado
+          <select id="order-status"></select>
+        </label>
+        <label>Data prevista
+          <input id="order-due" type="date" required>
+        </label>
+      </div>
+      <fieldset>
+        <legend>Produtos</legend>
+        <div class="line-add">
+          <label class="grow">Produto
+            <select id="line-product"></select>
+          </label>
+          <label>Quantidade
+            <input id="line-qty" type="number" min="1" step="1" value="1" inputmode="numeric">
+          </label>
+          <button type="button" class="btn btn-ghost" id="add-line">Adicionar</button>
+        </div>
+        <ul id="line-list" class="stack"></ul>
+        <p id="draft-total"></p>
+      </fieldset>
+      <p id="order-error" role="alert"></p>
+      <div class="dialog-actions">
+        <button type="button" class="btn btn-ghost" id="order-cancel">Cancelar</button>
+        <button type="submit" class="btn btn-primary">Guardar encomenda</button>
+      </div>
+    </form>
+  </dialog>
+
+  <script src="app.js"></script>
+</body>
+</html>
